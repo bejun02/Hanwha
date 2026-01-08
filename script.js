@@ -831,15 +831,15 @@ function updateReport(isInfinite, totalMonths, netAssets, expense, income, inter
     let expertText = "";
 
     if (isInfinite) {
-        expertText = `현재 귀하의 자산 구조는 **완벽한 경제적 자유** 상태입니다.\n물가 상승(3%)을 고려하더라도 자산 소득이 지출을 능가합니다.\n은퇴 후 여유로운 삶을 즐기거나, 현지 기부 및 재투자를 고려해보세요.`;
+        expertText = `현재 귀하의 자산 구조는 <strong>완벽한 경제적 자유</strong> 상태입니다.\n물가 상승(3%)을 고려하더라도 자산 소득이 지출을 능가합니다.\n은퇴 후 여유로운 삶을 즐기거나, 현지 기부 및 재투자를 고려해보세요.`;
     } else if (years >= 15) {
-        expertText = `현재 자산 구조는 **비교적 안정적**이나, 인플레이션 영향으로 ${years}년 뒤 자산 감소가 가속화될 수 있습니다.\n초기 10년은 여유가 있지만, 60대 이후 의료비 등 변수에 대비하여 **월 수익 ${Math.round(requiredIncome * 0.3 / 10000)}만원** 정도의 소일거리를 만드는 것을 추천합니다.`;
+        expertText = `현재 자산 구조는 <strong>비교적 안정적</strong>이나, 인플레이션 영향으로 ${years}년 뒤 자산 감소가 가속화될 수 있습니다.\n초기 10년은 여유가 있지만, 60대 이후 의료비 등 변수에 대비하여 <strong>월 수익 ${Math.round(requiredIncome * 0.3 / 10000)}만원</strong> 정도의 소일거리를 만드는 것을 추천합니다.`;
     } else {
-        expertText = `현재 구조로는 **${years}년 내 자산 고갈**이 예상됩니다.\n가장 시급한 것은 고정 지출을 줄이는 것입니다. 특히 주거비용(Rent) 비중이 높다면 매매 전환이나 저렴한 지역 이동을 고려해야 합니다.\n초기 정착금 사용을 최소화하고 즉각적인 현금 흐름 창출이 필요합니다.`;
+        expertText = `현재 구조로는 <strong>${years}년 내 자산 고갈</strong>이 예상됩니다.\n가장 시급한 것은 고정 지출을 줄이는 것입니다. 특히 주거비용(Rent) 비중이 높다면 매매 전환이나 저렴한 지역 이동을 고려해야 합니다.\n초기 정착금 사용을 최소화하고 즉각적인 현금 흐름 창출이 필요합니다.`;
     }
 
     if (stressRateFlag || stressYieldFlag) {
-        expertText += `\n\n📌 **스트레스 테스트 결과**: 위기 상황 가정 시 자산 수명이 단축되었습니다. 비상 예비비를 자산의 10% 이상 확보하세요.`;
+        expertText += `\n\n📌 <strong>스트레스 테스트 결과</strong>: 위기 상황 가정 시 자산 수명이 단축되었습니다. 비상 예비비를 자산의 10% 이상 확보하세요.`;
     }
     expertEl.innerHTML = expertText.replace(/\n/g, '<br>');
 
@@ -851,11 +851,11 @@ function updateReport(isInfinite, totalMonths, netAssets, expense, income, inter
         const save10 = expense * 0.1;
         const earn20 = expense * 0.2;
 
-        planList.innerHTML += `<li>월 지출을 **${Math.round(save10).toLocaleString()}원 (10%)** 줄이면 수명이 약 5~8년 연장됩니다.</li>`;
-        planList.innerHTML += `<li>현지에서 **${Math.round(earn20).toLocaleString()}원**의 추가 소득을 만들면 '주의' 등급으로 상향됩니다.</li>`;
-        planList.innerHTML += `<li>보유 부동산/주식 중 수익률이 낮은 자산을 **배당주(4~5%)**로 리밸런싱 하세요.</li>`;
+        planList.innerHTML += `<li>월 지출을 <strong>${Math.round(save10).toLocaleString()}원 (10%)</strong> 줄이면 수명이 약 5~8년 연장됩니다.</li>`;
+        planList.innerHTML += `<li>현지에서 <strong>${Math.round(earn20).toLocaleString()}원</strong>의 추가 소득을 만들면 '주의' 등급으로 상향됩니다.</li>`;
+        planList.innerHTML += `<li>보유 부동산/주식 중 수익률이 낮은 자산을 <strong>배당주(4~5%)</strong>로 리밸런싱 하세요.</li>`;
     } else {
-        planList.innerHTML += `<li>현재 상태를 유지하며 **건강 관리**와 **여가 생활**에 집중하세요.</li>`;
+        planList.innerHTML += `<li>현재 상태를 유지하며 <strong>건강 관리</strong>와 <strong>여가 생활</strong>에 집중하세요.</li>`;
         planList.innerHTML += `<li>상속세 및 증여 계획을 미리 수립하는 것이 좋습니다.</li>`;
     }
 }
