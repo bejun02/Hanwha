@@ -170,6 +170,31 @@ body {
     gap: 0.4rem;
 }
 
+/* V7.5 Fix: Grid for Bottom Cards */
+.bottom-row {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    /* Prevent overflow */
+    gap: 1rem;
+    /* Removed flex:1 and min-height:0 to prevent vertical squashing/overlap */
+    height: auto;
+    flex-shrink: 0;
+    /* Never shrink vertically */
+}
+
+/* Report Section */
+.report-container {
+    background: #fff;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+    padding: 1.5rem;
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+    /* Don't shrink */
+    margin-top: 1rem;
+    /* Space from bottom row */
+}
+
 .control-group label {
     font-size: 0.85rem;
     font-weight: 600;
@@ -414,10 +439,14 @@ input.slider-green {
     margin-bottom: 0.5rem;
 }
 
-.kpi-title {
+.modal-result-box span {
     font-size: 0.9rem;
-    font-weight: 600;
+    font-weight: 500;
     color: var(--text-muted);
+    text-align: right;
+    display: block;
+    /* Allow multiline for tax breakdown */
+    line-height: 1.4;
 }
 
 .icon-fade {
@@ -851,6 +880,18 @@ input.slider-green {
     font-weight: 600;
     margin-bottom: 0.4rem;
     color: var(--text-main);
+}
+
+.input-row-flex .half-input {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.input-row-flex .half-input label {
+    font-size: 0.8rem;
+    margin-bottom: 4px;
+    color: var(--text-muted);
 }
 
 .input-row-lg input {

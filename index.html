@@ -21,7 +21,7 @@
             <div class="header-status">
                 <div class="status-item">
                     <i class="fa-solid fa-arrow-trend-up"></i>
-                    <span id="exchangeRatDisplay">Loading...</span>
+                    <span id="exchangeRateDisplay">Loading...</span>
                 </div>
             </div>
         </div>
@@ -48,11 +48,7 @@
                             placeholder="자산 설정 클릭">
                         <span class="unit">원</span>
                     </div>
-                    <!-- Net Asset Preview Fixed Layout -->
-                    <div class="net-asset-container">
-                        <span class="label-text">실 수령 예상 (Net):</span>
-                        <div class="value-text"><strong id="netAssetPreview">0</strong> 원</div>
-                    </div>
+
                 </div>
 
                 <!-- Housing -->
@@ -68,6 +64,8 @@
                             <span>월세</span>
                         </label>
                     </div>
+                    <div id="housingDeductionInfo" class="micro-text text-primary"
+                        style="margin-top:5px; min-height:1.2em"></div>
                     <!-- Rent Slider -->
                     <div id="rentInputArea" class="slider-item slider-sub" style="display:none; margin-top:1rem;">
                         <div class="slider-header">
@@ -216,7 +214,7 @@
                 <div class="card">
                     <div class="analysis-header">
                         <div style="flex:1">
-                            <i class="fa-solid fa-wallet"></i> 2. 말레이시아 현지 최적화 지출
+                            <i class="fa-solid fa-wallet"></i> 말레이시아 현지 최적화 지출
                             <div class="chart-guide-text">💡 현지 물가 지수와 최적화 비율이 적용된 수치입니다</div>
                         </div>
                     </div>
@@ -235,9 +233,11 @@
                 </div>
 
                 <div class="card">
-                    <div class="analysis-header"><i class="fa-solid fa-lightbulb"></i> 금융 인사이트</div>
-                    <div id="insightBox" class="insight-box">
-                        <p class="placeholder-text">데이터를 입력해주세요.</p>
+                    <div class="analysis-header"><i class="fa-solid fa-passport"></i> MM2H 비자 자격 진단 (2025 기준)</div>
+                    <div id="visaCheckResult" class="insight-box"
+                        style="display:flex; flex-direction:column; justify-content:center; align-items:center; gap:10px;">
+                        <span style="color:#64748b; font-size:0.9em">보유 현금/주식 자산 기준</span>
+                        <div id="visaBadge" style="font-weight:bold; font-size:1.2em; color:#94a3b8">-</div>
                     </div>
                     <div class="checklist">
                         <h4>Checklist</h4>
@@ -324,23 +324,48 @@
 
                 <!-- TAB CONTENT: Real Estate -->
                 <div id="tab-realestate" class="tab-content active">
-                    <div class="input-row-lg">
+                    <div class="input-row">
                         <label>매도 예상 가액</label>
-                        <input type="text" id="propSell" placeholder="0" onkeyup="formatNumberInput(this)">
-                    </div>
-                    <div class="input-row-lg">
-                        <label>취득 가액 (매입가)</label>
-                        <input type="text" id="propBuy" placeholder="0" onkeyup="formatNumberInput(this)">
+                        <input type="text" id="propSell" class="modal-input" placeholder="0"
+                            onkeyup="formatNumberInput(this)">
                     </div>
                     <div class="input-row-flex">
-                        <div>
-                            <label>보유 기간 (년)</label>
-                            <input type="number" id="propYears" value="2" min="1" style="width:80px">
+                        <div class="half-input">
+                            <label>해당 집의 예상 월세</label>
+                            <input type="text" id="propRentEst" class="modal-input" placeholder="월세화 시 금액"
+                                onkeyup="formatNumberInput(this)">
                         </div>
-                        <div class="checkbox-wrapper">
-                            <input type="checkbox" id="propOneHouse" checked>
-                            <label for="propOneHouse">1세대 1주택 (12억 공제)</label>
+                        <div class="half-input">
+                            <label>해당 집의 예상 보증금</label>
+                            <input type="text" id="propDepositEst" class="modal-input" placeholder="보증금"
+                                onkeyup="formatNumberInput(this)">
                         </div>
+                    </div>
+                    <div class="input-row">
+                        <label>매수 가격 (원)</label>
+                        <input type="text" id="propBuy" class="modal-input" placeholder="구매 당시 가격"
+                            onkeyup="formatNumberInput(this)">
+                    </div>
+                    <div class="input-row">
+                        <label>취득세/중개수수료 (원)</label>
+                        <input type="text" id="propAcqCost" class="modal-input" placeholder="집값의 약 3.5% (자동계산)"
+                            onkeyup="formatNumberInput(this)"
+                            onfocus="if(this.value=='') { let b = document.getElementById('propBuy').value; if(b) { this.value=Math.round(parseNumber(b)*0.035).toLocaleString(); updateTaxModal(); } }"
+                            onblur="updateTaxModal()">
+                    </div>
+                    <div class="input-row">
+                        <label>자본적 지출 (원)</label>
+                        <input type="text" id="propCapEx" class="modal-input" placeholder="샤시, 확장 등 (세금 공제용)"
+                            onkeyup="formatNumberInput(this)">
+                    </div>
+                    <div class="input-row">
+                        <label>보유 기간 (년)</label>
+                        <input type="number" id="propYears" class="modal-input" value="2" min="1" max="50"
+                            style="text-align:right">
+                    </div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="propOneHouse" checked>
+                        <label for="propOneHouse">1세대 1주택 (비과세/장기보유 혜택)</label>
                     </div>
                     <div class="tax-result-box">
                         <span>예상 양도소득세</span>

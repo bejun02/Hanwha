@@ -12,7 +12,8 @@ let stressYieldFlag = false;
 const INFLATION_RATE = 0.03; // 3% Annual Inflation
 
 // V7.0 Cost Indices (Korea -> Malaysia)
-const COST_INDICES = {
+// V7.0 Cost Indices (Korea -> Malaysia) - Dynamic
+let COST_INDICES = {
     food: 0.44, // 44% of Korea
     market: 0.6,
     trans: 0.5,
@@ -20,6 +21,18 @@ const COST_INDICES = {
     fixed: 0.8,
     rent: 1.0   // 1.0 (Direct Local Rent)
 };
+
+// 2024 Korea Income Tax Brackets (Tax Base -> Rate, Deduction)
+const TAX_BRACKETS_2024 = [
+    { limit: 14000000, rate: 0.06, deduct: 0 },
+    { limit: 50000000, rate: 0.15, deduct: 1260000 },
+    { limit: 88000000, rate: 0.24, deduct: 5760000 },
+    { limit: 150000000, rate: 0.35, deduct: 15440000 },
+    { limit: 300000000, rate: 0.38, deduct: 19940000 },
+    { limit: 500000000, rate: 0.40, deduct: 25940000 },
+    { limit: 1000000000, rate: 0.42, deduct: 35940000 },
+    { limit: Infinity, rate: 0.45, deduct: 65940000 }
+];
 
 document.addEventListener('DOMContentLoaded', () => {
     fetchExchangeRate();
@@ -36,7 +49,7 @@ async function fetchExchangeRate() {
 
         // UI Display (1 MYR = ? KRW)
         const rateInverse = 1 / currentExchangeRate;
-        document.getElementById('exchangeRatDisplay').innerHTML =
+        document.getElementById('exchangeRateDisplay').innerHTML =
             `1 MYR = <strong style="color:var(--text-main)">${rateInverse.toFixed(2)}</strong> KRW`;
 
         calculateAll();
@@ -44,7 +57,7 @@ async function fetchExchangeRate() {
         console.error("Exchange Rate Error", e);
         // Fallback
         currentExchangeRate = 1 / 300;
-        document.getElementById('exchangeRatDisplay').textContent = "Offline Mode (1 MYR = 300 KRW)";
+        document.getElementById('exchangeRateDisplay').textContent = "Offline Mode (1 MYR = 300 KRW)";
         calculateAll();
     }
 }
@@ -117,7 +130,7 @@ function initModalLogic() {
     const applyBtn = document.getElementById('btnApplyAsset');
 
     // Open/Close
-    openBtn.addEventListener('click', () => { modal.classList.add('open'); recalculateTaxModal(); });
+    openBtn.addEventListener('click', () => { modal.classList.add('open'); updateTaxModal(); });
     closeBtn.addEventListener('click', () => modal.classList.remove('open'));
 
     // Tabs
@@ -131,22 +144,21 @@ function initModalLogic() {
     });
 
     // Inputs in Modal -> Trigger Recalc
-    const inputs = ['propSell', 'propBuy', 'propYears', 'propOneHouse', 'stockSell', 'stockBuy', 'stockOverseas', 'cashAmount', 'fxSpread'];
+    const inputs = ['propSell', 'propBuy', 'propAcqCost', 'propCapEx', 'propRentEst', 'propDepositEst', 'propYears', 'propOneHouse', 'stockSell', 'stockBuy', 'stockOverseas', 'cashAmount', 'fxSpread'];
     inputs.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.addEventListener('input', (e) => {
             if (e.target.type === 'text') formatNumberInput(e.target);
             if (id === 'fxSpread') document.getElementById('fxSpreadVal').textContent = e.target.value + '%';
-            recalculateTaxModal();
+            updateTaxModal();
         });
-        if (el && el.type === 'checkbox') el.addEventListener('change', recalculateTaxModal);
+        if (el && el.type === 'checkbox') el.addEventListener('change', updateTaxModal);
     });
 
     // Apply Button
     applyBtn.addEventListener('click', () => {
         // Update Main Dashboard
         document.getElementById('totalAssetsDisplay').value = calculatedNetAsset.toLocaleString();
-        document.getElementById('netAssetPreview').textContent = calculatedNetAsset.toLocaleString() + ' 원';
 
         // Save to Local
         saveToLocal();
@@ -157,97 +169,189 @@ function initModalLogic() {
     });
 }
 
-function recalculateTaxModal() {
-    // 1. Real Estate Tax
-    const pSell = parseNumber(document.getElementById('propSell').value);
-    const pBuy = parseNumber(document.getElementById('propBuy').value);
+function updateTaxModal() {
+    /* --- 1. Real Estate Tax Engine --- */
+    const pSellElement = document.getElementById('propSell');
+    const pBuyElement = document.getElementById('propBuy');
+
+    // Safety Check
+    if (!pSellElement || !pBuyElement) return;
+
+    const pSell = parseNumber(pSellElement.value);
+    const pBuy = parseNumber(pBuyElement.value);
     const pYears = parseInt(document.getElementById('propYears').value) || 0;
     const isOneHouse = document.getElementById('propOneHouse').checked;
 
+    // Additional Costs
+    const pAcq = parseNumber(document.getElementById('propAcqCost').value); // Acquisition Tax, Brokerage
+    const pCap = parseNumber(document.getElementById('propCapEx').value);   // Capital Expenditure
+
     let propTax = 0;
+
     if (pSell > pBuy) {
-        let gain = pSell - pBuy;
-        // 1-House Exemption (12억)
+        // Step 1: Capital Gain
+        let gain = pSell - pBuy - pAcq - pCap;
+        if (gain < 0) gain = 0;
+
+        // Step 2: 1-House Exemption (Up to 12 Billion KRW)
+        let taxableGain = gain;
         if (isOneHouse && pSell > 1200000000) {
-            gain = gain * ((pSell - 1200000000) / pSell);
+            taxableGain = gain * ((pSell - 1200000000) / pSell);
         } else if (isOneHouse && pSell <= 1200000000) {
-            gain = 0;
+            taxableGain = 0;
         }
 
-        // Long-term deduction (Simplified)
+        // Step 3: Long-term Holding Special Deduction
         let deductRate = 0;
-        if (isOneHouse) deductRate = Math.min(pYears * 0.08, 0.80); // Max 80%
-        else deductRate = Math.min(Math.max(pYears - 3, 0) * 0.02, 0.30); // General
+        if (pYears >= 3) {
+            if (isOneHouse) {
+                deductRate = Math.min(pYears * 0.08, 0.80);
+            } else {
+                deductRate = Math.min(pYears * 0.02, 0.30);
+            }
+        }
 
-        if (pYears < 3) deductRate = 0;
+        const longTermDeduction = taxableGain * deductRate;
+        const incomeAmount = taxableGain - longTermDeduction;
 
-        let taxBase = gain - (gain * deductRate) - 2500000; // Basic deduction
+        // Step 4: Basic Deduction
+        let taxBase = incomeAmount - 2500000;
         if (taxBase < 0) taxBase = 0;
 
-        // KR Tax Rates 2024
-        propTax = calcProgressiveTax(taxBase);
-    }
-    document.getElementById('estPropTax').textContent = Math.round(propTax).toLocaleString() + ' 원';
+        // Step 5: Calc Tax Rate
+        const nationalTax = calcProgressiveTax(taxBase);
 
-    // 2. Stock Tax
+        // Step 6: Local Income Tax (10%)
+        propTax = nationalTax * 1.10;
+    }
+    const estProp = document.getElementById('estPropTax');
+    if (estProp) estProp.innerHTML = `<span style="color:#ef4444">${Math.round(propTax).toLocaleString()}</span> 원`;
+
+
+    /* --- 2. Stock Tax Engine --- */
     const sSell = parseNumber(document.getElementById('stockSell').value);
     const sBuy = parseNumber(document.getElementById('stockBuy').value);
-    const isOver = document.getElementById('stockOverseas').checked;
+
     let stockTax = 0;
     if (sSell > sBuy) {
         const sGain = sSell - sBuy;
         const deduction = 2500000;
         if (sGain > deduction) {
-            stockTax = (sGain - deduction) * 0.22; // 22% (Income + Local)
+            stockTax = (sGain - deduction) * 0.22;
         }
     }
     document.getElementById('estStockTax').textContent = Math.round(stockTax).toLocaleString() + ' 원';
 
-    // 3. Totals
+
+    /* --- 3. Financial Cost (FX Spread) --- */
+    /* --- 3. Financial Cost (FX Spread) --- */
     const cash = parseNumber(document.getElementById('cashAmount').value);
-    const grossTotal = pSell + sSell + cash;
-    const totalTax = propTax + stockTax;
+    const depositReturn = parseNumber(document.getElementById('propDepositEst').value); // Korea Deposit Return
+    let spr = parseFloat(document.getElementById('fxSpread').value);
+    // We will update the 'Net Asset Preview' in main UI with this high precision value.
 
-    // 4. FX Cost
-    const spread = parseFloat(document.getElementById('fxSpread').value) / 100;
-    const liquidAmount = grossTotal - totalTax;
-    const fxCost = (liquidAmount * spread) + 5000; // + 5000 krw fixed fee
+    // Total Tax Bill (Prop + Stock)
+    const totalTaxBill = propTax + stockTax;
 
-    const finalNet = liquidAmount - fxCost;
+    // Total Liquidity (Gross)
+    // Deposit is tax-free capital return
+    const grossTotal = pSell + sSell + cash + depositReturn;
 
-    // UI Update
-    document.getElementById('modalGross').textContent = grossTotal.toLocaleString();
-    document.getElementById('modalTax').textContent = '- ' + Math.round(totalTax).toLocaleString();
-    document.getElementById('modalFX').textContent = '- ' + Math.round(fxCost).toLocaleString();
-    document.getElementById('modalNet').textContent = Math.round(finalNet).toLocaleString();
+    // Calculate FX Cost on Liquid Assets (Gross - Tax)
+    if (spr < 1.0) spr = 1.0;
+    const liquidKrw = grossTotal - totalTaxBill;
+    const fxCost = liquidKrw > 0 ? liquidKrw * (spr / 100) : 0;
 
-    calculatedNetAsset = finalNet > 0 ? finalNet : 0;
+    // Net Asset
+    const finalNet = liquidKrw - fxCost;
+
+    // Net Asset Parts (Global Storage for Sim)
+    window.simPropNet = (pSell - pBuy - pAcq - pCap > 0) ? (pSell - pAcq - pCap - propTax) : (pSell - pAcq - pCap);
+    // Wait, Prop Net is just Revenue (pSell) - Costs? 
+    // Actually, "Liquidity" from House = SellPrice - Tax - SetupCosts(Acq/Cap already paid? No, usually subtracted from gain. Acq/Cap are past sunk costs? Or paid now?)
+    // Usually pAcq/pCap are *past* costs used for tax calc. They are not *cash out* now.
+    // So Cash In = Sell Price - Brokerage(New) - Tax.
+    // Simplifying: Cash In = Sell Price - Tax. (Assuming Brokerage is negligible or user subtracts).
+    // Let's stick to: Cash In = Sell Price - Est.Tax.
+    window.simPropNet = pSell - propTax;
+
+    window.simDepositNet = depositReturn;
+    window.simCommonNet = (sSell - stockTax) + cash - fxCost; // Applying FX Cost to common logic for simplicity, or apply FX to total? FX depends on Total.
+
+    // Recalculate FX properly based on scenario? 
+    // FX Cost logic in updateTaxModal currently runs on `grossTotal`.
+    // If we split, we need to apply FX to the *sum*.
+    // So let's store GROSS parts.
+    window.simPropGross = pSell;
+    window.simPropTax = propTax;
+
+    window.simDepositGross = depositReturn;
+
+    window.simStockGross = sSell;
+    window.simStockTax = stockTax;
+    window.simCashGross = cash;
+    window.simFXRate = spr;
+
+    // We still update the modal display with the SUM (or maybe just keep it as is, but simulation uses the split).
+    // User complaint: "Don't sum them in calculation".
+    // V7.3 Fix: Modal Display now respects the active Housing Type to avoid confusion.
+
+    const hType = document.querySelector('input[name="housingType"]:checked') ? document.querySelector('input[name="housingType"]:checked').value : 'buy';
+
+    let displayGross = 0;
+    let displayTax = 0;
+    let displayLiquid = 0;
+
+    // Common Parts
+    const cGross = (window.simStockGross || 0) + (window.simCashGross || 0);
+    const cTax = (window.simStockTax || 0);
+
+    if (hType === 'buy') {
+        displayGross = (window.simPropGross || 0) + cGross;
+        displayTax = (window.simPropTax || 0) + cTax;
+        displayLiquid = (window.simPropNet || 0) + window.simCommonNet;
+    } else {
+        displayGross = (window.simDepositGross || 0) + cGross;
+        displayTax = cTax;
+        displayLiquid = (window.simDepositNet || 0) + window.simCommonNet;
+    }
+
+    // FX is calculated on the scenario's Liquid
+    const finalFX = displayLiquid > 0 ? displayLiquid * (spr / 100) : 0; // Approx FX logic (Sim uses simpler math, but close enough for preview)
+    // Actually Sim logic: liquidKrw = Gross - Tax. fx = liquid * rate. Net = liquid - fx.
+    // Let's match Sim logic exactly:
+    const dLiquidPreFX = displayGross - displayTax;
+    const dFX = dLiquidPreFX > 0 ? dLiquidPreFX * (spr / 100) : 0;
+    const dNet = Math.floor(dLiquidPreFX - dFX);
+
+    calculatedNetAsset = (dNet > 0) ? dNet : 0;
+
+    // ... existing modal update code ...
+    document.getElementById('modalGross').textContent = displayGross.toLocaleString();
+    document.getElementById('modalTax').textContent = '- ' + Math.round(displayTax).toLocaleString();
+    document.getElementById('modalFX').textContent = '- ' + Math.round(dFX).toLocaleString();
+    document.getElementById('modalNet').textContent = calculatedNetAsset.toLocaleString();
 }
 
+
 function calcProgressiveTax(base) {
-    if (base <= 14000000) return base * 0.06;
-    if (base <= 50000000) return (base * 0.15) - 1260000;
-    if (base <= 88000000) return (base * 0.24) - 5760000;
-    if (base <= 150000000) return (base * 0.35) - 15440000;
-    if (base <= 300000000) return (base * 0.38) - 19940000;
-    if (base <= 500000000) return (base * 0.40) - 25940000;
-    if (base <= 1000000000) return (base * 0.42) - 35940000;
+    if (base <= 0) return 0;
+
+    for (let i = 0; i < TAX_BRACKETS_2024.length; i++) {
+        const b = TAX_BRACKETS_2024[i];
+        if (base <= b.limit) {
+            return (base * b.rate) - b.deduct;
+        }
+    }
+    // Fallback (should be covered by Infinity)
     return (base * 0.45) - 65940000;
 }
 
 function toggleRentInput(type) {
     const rentArea = document.getElementById('rentInputArea');
-    const depositInput = document.getElementById('costDeposit');
-    if (type === 'rent') {
-        rentArea.style.display = 'block';
-        depositInput.placeholder = '월세 x 2.5 (Auto)';
-    } else {
-        rentArea.style.display = 'none';
-        depositInput.placeholder = '자가 시 0';
-        document.getElementById('sliderRent').value = 0;
-        document.getElementById('valRent').textContent = '0';
-        document.getElementById('expenseRent').value = 0;
-    }
+    // V7.2 Enhancement: We now calculate Rent from Asset Modal (KR Rent * Ratio).
+    // The manual Local Rent slider is redundant, so we keep it hidden.
+    if (rentArea) rentArea.style.display = 'none';
 }
 
 function setupSlider(sliderId, displayId, hiddenInputId) {
@@ -288,190 +392,301 @@ function parseNumber(str) {
 
 
 
-/* --- V7.0 MAIN CALCULATION ENGINE --- */
+/* --- V7.2 SIMULATION ENGINE --- */
+// Constants
+const HOUSING_BUY_RATIO = 0.55; // Multiplier to estimate MYR Property Price from KRW Property
+
 function calculateAll() {
-    if (!currentExchangeRate) return;
+    try {
+        if (!currentExchangeRate) return;
 
-    // 1. Assets
-    const netAssetsDisplay = document.getElementById('totalAssetsDisplay').value;
-    const assets = parseNumber(netAssetsDisplay);
+        // 1. Get Assets (Dynamic Calculation based on Housing Choice)
+        // Ensure values are fresh
+        if (typeof window.simPropGross === 'undefined') updateTaxModal();
 
-    // 2. Initial Costs
-    const cVisa = parseNumber(document.getElementById('costVisa').value);
-    const cMove = parseNumber(document.getElementById('costMove').value);
-    const cDep = parseNumber(document.getElementById('costDeposit').value);
-    const totalSetup = cVisa + cMove + cDep;
+        const housingType = document.querySelector('input[name="housingType"]:checked').value; // 'rent' or 'buy'
 
-    document.getElementById('totalSetupCost').textContent = totalSetup.toLocaleString();
+        let simGross = 0;
+        let simTax = 0;
 
-    // Progress Bar
-    let setupPct = 0;
-    if (assets > 0) setupPct = (totalSetup / assets) * 100;
-    if (setupPct > 100) setupPct = 100;
-    document.getElementById('setupProgressBar').style.width = setupPct + '%';
+        // Common Assets
+        const commonGross = (window.simStockGross || 0) + (window.simCashGross || 0);
+        const commonTax = (window.simStockTax || 0);
 
-    // Net Available
-    let netAssets = assets - totalSetup;
+        if (housingType === 'buy') {
+            // Scenario A: Sell KR House
+            simGross = (window.simPropGross || 0) + commonGross;
+            simTax = (window.simPropTax || 0) + commonTax;
+        } else {
+            // Scenario B: Return KR Deposit
+            simGross = (window.simDepositGross || 0) + commonGross;
+            simTax = commonTax; // No property tax on deposit return
+            // Note: We ignore window.simPropTax here as we assume House is kept/not sold? 
+            // Or if user meant "Sell House AND Rent Local", this logic limits it.
+            // But aligned with user request: "Don't sum both."
+        }
 
-    // V6.0 Stress Factors
-    let effExchangeRate = currentExchangeRate;
-    if (stressRateFlag) effExchangeRate = effExchangeRate * 0.909;
+        // FX Cost
+        const spread = (window.simFXRate || 1.0); // %
+        const liquidKrw = simGross - simTax;
+        const fxCost = liquidKrw > 0 ? liquidKrw * (spread / 100) : 0;
 
-    // 3. Income
-    let annualInterestRate = parseFloat(document.getElementById('sliderInterest').value) || 0;
-    if (stressYieldFlag) annualInterestRate = Math.max(0, annualInterestRate - 2.0);
+        let finalAssets = Math.floor(liquidKrw - fxCost);
+        if (finalAssets < 0) finalAssets = 0;
 
-    const monthlyInterestRate = (annualInterestRate / 100) / 12;
+        // Update Main Display
+        document.getElementById('totalAssetsDisplay').value = finalAssets.toLocaleString();
 
-    const salaryMYR = parseNumber(document.getElementById('salaryMYR').value);
-    const salaryToKRW = salaryMYR / effExchangeRate;
+        // 2. Initial Costs (Visa, Move, Setup)
+        const cVisa = parseNumber(document.getElementById('costVisa').value);
+        const cMove = parseNumber(document.getElementById('costMove').value);
+        const cDep = parseNumber(document.getElementById('costDeposit').value);
+        const totalSetup = cVisa + cMove + cDep;
 
-    const totalMonthlyIncome = salaryToKRW;
-    document.getElementById('totalIncomeDisplay').textContent = Math.round(totalMonthlyIncome).toLocaleString();
+        document.getElementById('totalSetupCost').textContent = totalSetup.toLocaleString();
 
-    // 4. Expenses (Input vs Output)
-    const eFood = parseInt(document.getElementById('sliderFood').value);
-    const eMarket = parseInt(document.getElementById('sliderMarket').value);
-    const eTrans = parseInt(document.getElementById('sliderTransport').value);
-    const eUtil = parseInt(document.getElementById('sliderUtility').value);
-    const eFixed = parseInt(document.getElementById('sliderFixed').value);
-    const eRent = parseInt(document.getElementById('sliderRent').value);
+        // Progress Bar
+        let setupPct = 0;
+        if (finalAssets > 0) setupPct = (totalSetup / finalAssets) * 100;
+        if (setupPct > 100) setupPct = 100;
+        document.getElementById('setupProgressBar').style.width = setupPct + '%';
 
-    // Korea Original (Approximate Input)
-    const koreaTotalExpense = eFood + eMarket + eTrans + eUtil + eFixed; // Rent excluded from chart comparison if it's local logic
+        // 3. Subtract Initial Costs from Asset
+        let currentAsset = finalAssets - totalSetup;
 
-    // Malaysia Optimized (Output)
+        // 4. Housing Logic (Buy vs Rent)
+        // housingType is already defined above
+
+        // User Specified Ratios
+        // market: 0.45 * (2/3) ~= 0.30
+        // dining: 0.44 * (2/3) ~= 0.29
+        // transport: 0.50
+        // utility: Buy(0.65) / Rent(0.45)
+        // rent: Buy(0) / Rent(0.58)
+
+        // Update Global COST_INDICES for Charts
+        COST_INDICES.market = 0.45 * (2 / 3);
+        COST_INDICES.food = 0.44 * (2 / 3); // Dining
+        COST_INDICES.trans = 0.50;
+        COST_INDICES.fixed = 0.70; // Ensure fixed is also set
+
+        let localRentCost = 0;
+
+        const deductionEl = document.getElementById('housingDeductionInfo');
+        if (housingType === 'buy') {
+            // Option A: Buying a House in Malaysia
+            COST_INDICES.rent = 0;
+            COST_INDICES.util = 0.65;
+
+            // Estimate Purchase Price based on Korean Property Benchmark
+            const krwSellPrice = parseNumber(document.getElementById('propSell').value);
+            if (krwSellPrice > 0) {
+                const myrHousePrice = krwSellPrice * HOUSING_BUY_RATIO;
+                currentAsset -= myrHousePrice; // Assets reduced
+
+                // Visual Confirmation
+                if (deductionEl) {
+                    const ok = Math.floor(myrHousePrice / 100000000);
+                    const man = Math.round((myrHousePrice % 100000000) / 10000);
+                    const formatStr = ok > 0 ? `${ok}억 ${man > 0 ? man.toLocaleString() + '만' : ''}` : `${man.toLocaleString()}만`;
+
+                    deductionEl.innerHTML = `<i class="fa-solid fa-check"></i> 현지 주택 구입: 자산에서 약 <strong>${formatStr}원</strong> 차감됨`;
+                }
+            } else {
+                // Warning if Sell Price is missing
+                if (deductionEl) {
+                    deductionEl.innerHTML = `<span class="text-danger"><i class="fa-solid fa-circle-exclamation"></i> 매매 시뮬레이션을 위해 '자산설정 > 부동산'에서 <strong>매도 금액</strong>을 입력해주세요.</span>`;
+                }
+            }
+
+        } else {
+            // Option B: Renting
+            COST_INDICES.rent = 0.58;
+            COST_INDICES.util = 0.45;
+            if (deductionEl) deductionEl.innerHTML = ""; // Clear info
+
+            // Calculate Rent
+            // User said: "Convert Inputted Rent to local ratio"
+            const krwRentEst = parseNumber(document.getElementById('propRentEst').value);
+            if (krwRentEst > 0) {
+                localRentCost = krwRentEst * COST_INDICES.rent;
+            } else {
+                // Fallback to Slider if benchmarking input is missing
+                const sliderRent = parseFloat(document.getElementById('sliderRent').value) || 0;
+                // Let's use sliderRent as "User's Korean Rent" if propRentEst is empty.
+                if (sliderRent > 0) localRentCost = sliderRent * COST_INDICES.rent;
+            }
+        }
+        // 5. Monthly Expenses (KRW -> MYR equivalent)
+        const expFood = parseFloat(document.getElementById('sliderFood').value) * COST_INDICES.food;
+        const expMarket = parseFloat(document.getElementById('sliderMarket').value) * COST_INDICES.market;
+        const expTrans = parseFloat(document.getElementById('sliderTransport').value) * COST_INDICES.trans;
+        const expUtil = parseFloat(document.getElementById('sliderUtility').value) * COST_INDICES.util;
+        const expFixed = parseFloat(document.getElementById('sliderFixed').value) * COST_INDICES.fixed;
+        // Total Monthly Expense
+        // Note: localRentCost is already calculated
+        const totalMonthlyExpense = expFood + expMarket + expTrans + expUtil + expFixed + localRentCost;
+
+        // KPI Update: Local Monthly Expense
+        document.getElementById('totalCostKRW').textContent = Math.round(totalMonthlyExpense).toLocaleString();
+
+        // Convert back to MYR for display
+        const totalMonthlyMYR = totalMonthlyExpense * currentExchangeRate; // Fix: KRW * Rate = MYR
+        document.getElementById('totalCostMYR').textContent = Math.round(totalMonthlyMYR).toLocaleString();
+
+        // 6. Income
+        const incomeSalaryMYR = parseNumber(document.getElementById('salaryMYR').value);
+        const incomeSalaryKRW = incomeSalaryMYR * (1 / currentExchangeRate); // Fix: Divide by rate (MYR->KRW)
+
+        // Investment Income (Calculated in Loop)
+        const yieldRate = parseFloat(document.getElementById('sliderInterest').value) / 100;
+
+        document.getElementById('totalIncomeDisplay').textContent = Math.round(incomeSalaryKRW).toLocaleString(); // Basic Income
+
+        // 7. Simulation Loop
+        const simMonths = 600; // 50 Years
+        const dataPoints = [];
+        const labels = [];
+
+        let simAsset = currentAsset;
+
+        // Stress Logic
+        let appliedYield = yieldRate;
+        let appliedExRate = currentExchangeRate;
+
+        if (stressYieldFlag) appliedYield = Math.max(0, yieldRate - 0.02); // -2%p
+        if (stressRateFlag) appliedExRate = currentExchangeRate * 0.9; // -10% Value
+
+        // Monthly Inflation
+        const monthlyInflation = INFLATION_RATE / 12;
+        // Monthly Yield
+        const monthlyYield = appliedYield / 12;
+
+        let depleteIndex = -1;
+
+        for (let i = 0; i <= simMonths; i++) {
+            // Add Data point (Yearly or every 6 months to reduce chart load?)
+            // ChartJS can handle 600 points, but let's do monthly.
+
+            if (i % 12 === 0) {
+                labels.push((i / 12) + '년');
+                dataPoints.push(Math.round(simAsset));
+            }
+
+            if (simAsset <= 0) {
+                simAsset = 0;
+                if (depleteIndex === -1 && i > 0) depleteIndex = i;
+            }
+
+            // a. Investment Return (After Tax 15.4%)
+            let profit = simAsset * monthlyYield;
+            let tax = profit * 0.154;
+            let netProfit = profit - tax;
+
+            // b. Income (Salary)
+            // Salary is usually fixed or rises with inflation? Assumption: Fixed for simplified MVP or rises?
+            // Let's assume Salary rises with inflation too for realism, OR fixed. MVP: Fixed.
+            let monthlyIncome = incomeSalaryKRW;
+
+            // c. Expense (Inflated)
+            // Expense rises with inflation
+            let currentMonthExpense = totalMonthlyExpense * Math.pow(1 + monthlyInflation, i);
+
+            // Net Flow
+            simAsset = simAsset + netProfit + monthlyIncome - currentMonthExpense;
+        }
+
+        // Update Chart
+        updateChart(labels, dataPoints);
+
+        // Update Comparison & Breakdown
+        updateComparisonChart(housingType, localRentCost);
+
+        // Prepare Objects for Breakdown
+        const krwExpenses = {
+            f: parseFloat(document.getElementById('sliderFood').value),
+            m: parseFloat(document.getElementById('sliderMarket').value),
+            t: parseFloat(document.getElementById('sliderTransport').value),
+            u: parseFloat(document.getElementById('sliderUtility').value),
+            x: parseFloat(document.getElementById('sliderFixed').value),
+            r: parseFloat(document.getElementById('sliderRent').value) // Korea Rent
+        };
+
+        const localExpenses = {
+            f: expFood,
+            m: expMarket,
+            t: expTrans,
+            u: expUtil,
+            x: expFixed,
+            r: localRentCost // Local logic
+        };
+
+        updateBreakdown(krwExpenses, localExpenses, currentExchangeRate);
+
+        // Derived Metrics for Report
+        const isInfinite = (depleteIndex === -1 && simAsset >= currentAsset);
+        const finalMonths = (depleteIndex === -1) ? simMonths : depleteIndex;
+        const interestRateVal = parseFloat(document.getElementById('sliderInterest').value);
+
+        // V7.2 Fix: Update Main Dashboard Runway Display
+        const rDisplay = document.getElementById('runwayDisplay');
+        if (rDisplay) {
+            if (isInfinite) {
+                rDisplay.innerHTML = "무한 <span class='text-sm text-gray-500'>(자산 증가 중)</span>";
+            } else {
+                const rY = Math.floor(finalMonths / 12);
+                const rM = finalMonths % 12;
+                rDisplay.innerHTML = `${rY}년 ${rM}개월 <span class='text-sm text-gray-500'>(현재 소비 기준)</span>`;
+            }
+        }
+
+        // Update Executive Report stats
+        updateReport(isInfinite, finalMonths, currentAsset, totalMonthlyExpense, incomeSalaryKRW, interestRateVal);
+
+        // V7.4 Feature: Update Visa Status
+        updateVisaStatus(window.simCommonNet); // Based on Liquid Assets (Cash+Stock) available for Deposit
+        // Actually, MM2H requires *Liquid Assets* proof.
+        // If 'Buy' mode, House equity doesn't count for Deposit usually (must be liquid).
+        // So window.simCommonNet (Cash+Stock) is the correct metric?
+        // Or window.simStockGross + window.simCashGross?
+        // Let's use `(window.simStockGross + window.simCashGross)` as "Liquid Assets Proof".
+        const liquidProof = (window.simStockGross || 0) + (window.simCashGross || 0);
+        updateVisaStatus(liquidProof);
+
+        saveToLocal();
+    } catch (err) {
+        console.error("Simulation Error:", err);
+        alert("시뮬레이션 오류: " + err.message);
+    }
+}
+
+// User Request 3 & 5: Split View Chart (Korea vs Malaysia)
+function updateComparisonChart(housingType, localRentCost) {
+    const ctx = document.getElementById('compareChart').getContext('2d');
+
+    // Recalculate Korea Expenses (Inputs)
+    const eFood = parseInt(document.getElementById('sliderFood').value) || 0;
+    const eMarket = parseInt(document.getElementById('sliderMarket').value) || 0;
+    const eTrans = parseInt(document.getElementById('sliderTransport').value) || 0;
+    const eUtil = parseInt(document.getElementById('sliderUtility').value) || 0;
+    const eFixed = parseInt(document.getElementById('sliderFixed').value) || 0;
+    const eRent = parseInt(document.getElementById('sliderRent').value) || 0;
+
+    // Korea Total
+    // User Assumption: Inputs represent current Korea Spending.
+    const koreaTotalExpense = eFood + eMarket + eTrans + eUtil + eFixed + eRent;
+
+    // Malaysia Expenses (Calculated)
     const lFood = eFood * COST_INDICES.food;
     const lMarket = eMarket * COST_INDICES.market;
     const lTrans = eTrans * COST_INDICES.trans;
     const lUtil = eUtil * COST_INDICES.util;
     const lFixed = eFixed * COST_INDICES.fixed;
-    const lRent = eRent * COST_INDICES.rent; // Direct 1.0 if using V7.1 Logic
+    // Rent is passed in (calculated in calculateAll based on Buy/Rent choice)
 
-    const localTotalExpense = lFood + lMarket + lTrans + lUtil + lFixed + lRent;
+    const localTotalExpense = lFood + lMarket + lTrans + lUtil + lFixed + localRentCost;
 
-    // Compare Visualization (Adding Rent to both sides for parity in Chart? No, Rent is usually distinct. 
-    // We will compare 'Living Costs' excluding Rent for purity, or just add eRent/lRent to both.
-    // For simplicity and user expectation: Input (Korea) + Rent vs Output (Local) + Rent)
-    updateComparisonChart(koreaTotalExpense + eRent, localTotalExpense);
-
-    // 5. Runway Calculation
-    let months = 0;
-    let currentCapital = netAssets;
-
-    let isInfinite = false;
-    let isDepleting = false; // Flag for >50y but depleting
-
-    const chartData = [];
-    const labels = [];
-
-    chartData.push(currentCapital);
-    labels.push('Start');
-
-    // Simulation Loop (600 months / 50 Years)
-    for (let i = 1; i <= 600; i++) {
-        // Inflation
-        let monthlyExpense = localTotalExpense;
-        const yearsPassed = Math.floor((i - 1) / 12);
-        if (yearsPassed > 0) {
-            monthlyExpense = localTotalExpense * Math.pow(1 + INFLATION_RATE, yearsPassed);
-        }
-
-        // Interest Income (Taxed 15.4%)
-        const rawInterest = currentCapital * monthlyInterestRate;
-        const taxedInterest = rawInterest * (1 - 0.154);
-
-        const totalIncome = totalMonthlyIncome + taxedInterest;
-        const netFlow = totalIncome - monthlyExpense;
-
-        currentCapital += netFlow;
-
-        if (i % 12 === 0) {
-            chartData.push(currentCapital);
-            labels.push(i / 12 + '년');
-        }
-
-        if (currentCapital <= 0) {
-            months = i;
-            break;
-        }
-    }
-
-    // Granular Runway Logic
-    if (currentCapital > 0 && months === 0) {
-        // Did not run out in 50 years.
-        if (currentCapital >= netAssets) {
-            // Capital Increased or Stayed Same -> Truly Infinite
-            isInfinite = true;
-            months = Infinity;
-        } else {
-            // Capital Decreased -> Will run out eventually
-            isDepleting = true;
-            // Linear extrapolation for simple estimate
-            const avgBurn = (netAssets - currentCapital) / 600;
-            const remainingMonths = currentCapital / avgBurn;
-            months = 600 + Math.floor(remainingMonths);
-        }
-    }
-
-    // Display Runway
-    const runwayDisplay = document.getElementById('runwayDisplay');
-    const badge = document.getElementById('safetyBadge');
-
-    if (isInfinite) {
-        runwayDisplay.innerHTML = `무한 <small>(Infinite)</small>`;
-        badge.textContent = "경제적 자립 (FIRE)";
-        badge.className = "badge badge-success";
-    } else if (isDepleting) {
-        // More than 50 years but finite
-        const totalY = Math.floor(months / 12);
-        if (totalY > 999) {
-            runwayDisplay.innerHTML = `무한 <small>(999년+)</small>`;
-            badge.textContent = "사실상 영구";
-            badge.className = "badge badge-success";
-        } else {
-            runwayDisplay.innerHTML = `${totalY}년 이상`;
-            badge.textContent = "매우 안정 (장기)";
-            badge.className = "badge badge-success";
-        }
-    } else {
-        // Less than 50 years
-        const y = Math.floor(months / 12);
-        const m = months % 12;
-        runwayDisplay.textContent = `${y}년 ${m}개월`;
-
-        if (y >= 30) { badge.textContent = "안정"; badge.className = "badge badge-success"; }
-        else if (y >= 15) { badge.textContent = "주의"; badge.className = "badge badge-warning"; }
-        else { badge.textContent = "위험"; badge.className = "badge badge-danger"; }
-
-        if (netAssets <= 0) {
-            runwayDisplay.textContent = "자산 부족";
-            badge.textContent = "즉시 고갈";
-            badge.className = "badge badge-danger";
-        }
-    }
-
-    // 6. Local Cost KPI
-    const costMYR = localTotalExpense * effExchangeRate;
-    document.getElementById('totalCostMYR').innerHTML = `<span class="currency-primary">MYR ${Math.round(costMYR).toLocaleString()}</span>`;
-    document.getElementById('totalCostKRW').innerHTML = `<span class="currency-secondary">/ 약 ${Math.round(localTotalExpense / 10000)}만 원</span>`;
-
-    updateBreakdown({ f: eFood, m: eMarket, t: eTrans, u: eUtil, x: eFixed, r: eRent },
-        { f: lFood, m: lMarket, t: lTrans, u: lUtil, x: lFixed, r: lRent },
-        effExchangeRate);
-    updateChart(labels, chartData, isInfinite);
-
-    // 9. Report & Insight
-    updateReport(isInfinite, months, netAssets, localTotalExpense, totalMonthlyIncome, annualInterestRate);
-
-    saveToLocal();
-}
-
-// User Request 3 & 5: Split View Chart (Korea vs Malaysia)
-function updateComparisonChart(koreaExp, localExp) {
-    const ctx = document.getElementById('compareChart').getContext('2d');
-    const savings = koreaExp - localExp;
-
+    // Render Chart
     if (compareChart) compareChart.destroy();
 
     compareChart = new Chart(ctx, {
@@ -479,8 +694,8 @@ function updateComparisonChart(koreaExp, localExp) {
         data: {
             labels: ['한국 (KRW)', '말레이시아 (KRW 환산)'],
             datasets: [{
-                data: [koreaExp, localExp],
-                backgroundColor: ['#3b82f6', '#10b981'], // User: Blue vs Green
+                data: [koreaTotalExpense, localTotalExpense],
+                backgroundColor: ['#3b82f6', '#10b981'],
                 borderRadius: 4,
                 barThickness: 30
             }]
@@ -494,16 +709,19 @@ function updateComparisonChart(koreaExp, localExp) {
         }
     });
 
+    // Savings Alert
+    const savings = koreaTotalExpense - localTotalExpense;
     const alertBox = document.getElementById('savingsAlert');
-    if (savings > 0) {
-        alertBox.innerHTML = `<i class="fa-solid fa-plane-departure"></i> 이민 시 월 <strong style="color:#15803d">${Math.round(savings / 10000)}만원</strong> 절약 효과!`;
-        alertBox.style.background = "#dcfce7";
-        alertBox.style.color = "#15803d";
-    } else {
-        alertBox.innerHTML = `지출이 비슷하거나 더 높습니다.`;
-        alertBox.style.background = "#f1f5f9";
+    if (alertBox) {
+        if (savings > 0) {
+            alertBox.innerHTML = `🎉 월 <strong style="color:#10b981">${savings.toLocaleString()}원</strong> 절약 가능! (약 ${Math.round((savings / koreaTotalExpense) * 100)}% 절감)`;
+            alertBox.style.display = 'block';
+        } else {
+            alertBox.style.display = 'none';
+        }
     }
 }
+
 
 // User Request 2: Tooltips & Transparent logic
 function updateBreakdown(krw, local, rate) {
@@ -717,6 +935,8 @@ function saveToLocal() {
         modal: {
             pSell: document.getElementById('propSell').value,
             pBuy: document.getElementById('propBuy').value,
+            pRent: document.getElementById('propRentEst').value, // New V7.1
+            pDep: document.getElementById('propDepositEst').value, // New V7.1
             pYears: document.getElementById('propYears').value,
             pOne: document.getElementById('propOneHouse').checked,
             sSell: document.getElementById('stockSell').value,
@@ -760,6 +980,8 @@ function loadFromLocal() {
         if (d.modal) {
             document.getElementById('propSell').value = d.modal.pSell || 0;
             document.getElementById('propBuy').value = d.modal.pBuy || 0;
+            document.getElementById('propRentEst').value = d.modal.pRent || 0; // New V7.1
+            document.getElementById('propDepositEst').value = d.modal.pDep || 0; // New V7.1
             document.getElementById('propYears').value = d.modal.pYears || 2;
             document.getElementById('propOneHouse').checked = d.modal.pOne;
             document.getElementById('stockSell').value = d.modal.sSell || 0;
@@ -768,9 +990,11 @@ function loadFromLocal() {
             document.getElementById('cashAmount').value = d.modal.cash || 0;
             document.getElementById('fxSpread').value = d.modal.fx || 1.0;
             document.getElementById('fxSpreadVal').textContent = (d.modal.fx || 1.0) + '%';
-            recalculateTaxModal();
+            updateTaxModal();
         }
     }
+    // Ensure simulation runs after loading data
+    calculateAll();
 }
 function setSlider(name, val) {
     const s = document.getElementById('slider' + name);
@@ -780,4 +1004,35 @@ function setSlider(name, val) {
         const hid = document.getElementById('expense' + name);
         if (hid) hid.value = val || 0;
     }
+}
+
+function updateVisaStatus(liquidAssets) {
+    const badge = document.getElementById('visaBadge');
+    if (!badge) return;
+
+    // MM2H 2025 Criteria (Approximate KRW)
+    // Platinum: Deposit $1M (~14.5 Billion KRW)
+    // Gold: Deposit $500k (~7.3 Billion KRW)
+    // Silver: Deposit $150k (~2.2 Billion KRW)
+
+    let tier = "자격 미달 (Fail)";
+    let color = "#ef4444"; // Red
+    let icon = "fa-circle-xmark";
+
+    if (liquidAssets >= 1450000000) {
+        tier = "플래티넘 (Platinum)"; // Fixed Deposit $1M
+        color = "#6366f1"; // Indigo
+        icon = "fa-crown";
+    } else if (liquidAssets >= 730000000) {
+        tier = "골드 (Gold)"; // Fixed Deposit $500k
+        color = "#f59e0b"; // Amber
+        icon = "fa-medal";
+    } else if (liquidAssets >= 220000000) {
+        tier = "실버 (Silver)"; // Fixed Deposit $150k
+        color = "#64748b"; // Scalable Silver
+        icon = "fa-shield-halved";
+    }
+
+    badge.innerHTML = `<i class="fa-solid ${icon}"></i> ${tier}`;
+    badge.style.color = color;
 }
