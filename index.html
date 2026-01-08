@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Global Asset Bridge - Premium</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" as="style" crossorigin
+        href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+    <header class="app-header">
+        <div class="header-inner">
+            <div class="logo">
+                <i class="fa-solid fa-earth-americas"></i> GAB Setup
+            </div>
+            <div class="header-status">
+                <div class="status-item">
+                    <i class="fa-solid fa-arrow-trend-up"></i>
+                    <span id="exchangeRatDisplay">Loading...</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <div class="app-container">
+        <!-- LEFT: Control Panel -->
+        <aside class="control-panel">
+            <div class="panel-header">
+                <h2><i class="fa-solid fa-sliders"></i> Simulation Control</h2>
+                <p>자산 및 라이프스타일 설정</p>
+            </div>
+
+            <div class="scroll-area">
+                <!-- Assets Input (Read Only) -->
+                <div class="control-group">
+                    <label style="display:flex; justify-content:space-between; align-items:center;">
+                        <span><i class="fa-solid fa-sack-dollar"></i> 총 자산 (KRW)</span>
+                        <button id="btnOpenModal" class="btn-xs btn-primary-outline"><i
+                                class="fa-solid fa-calculator"></i> 자산 설정</button>
+                    </label>
+                    <div class="input-wrapper">
+                        <input type="text" id="totalAssetsDisplay" class="main-input" value="0" readonly
+                            placeholder="자산 설정 클릭">
+                        <span class="unit">원</span>
+                    </div>
+                    <!-- Net Asset Preview Fixed Layout -->
+                    <div class="net-asset-container">
+                        <span class="label-text">실 수령 예상 (Net):</span>
+                        <div class="value-text"><strong id="netAssetPreview">0</strong> 원</div>
+                    </div>
+                </div>
+
+                <!-- Housing -->
+                <div class="control-group">
+                    <label><i class="fa-solid fa-house"></i> 현지 주거 선택 (Local Housing)</label>
+                    <div class="radio-pill-group">
+                        <label class="radio-pill">
+                            <input type="radio" name="housingType" value="buy" checked>
+                            <span>매매</span>
+                        </label>
+                        <label class="radio-pill">
+                            <input type="radio" name="housingType" value="rent">
+                            <span>월세</span>
+                        </label>
+                    </div>
+                    <!-- Rent Slider -->
+                    <div id="rentInputArea" class="slider-item slider-sub" style="display:none; margin-top:1rem;">
+                        <div class="slider-header">
+                            <label>예상 현지 월세 (KRW)</label>
+                            <span id="valRent" class="val-display">0</span>
+                        </div>
+                        <input type="range" id="sliderRent" min="0" max="5000000" step="10000" value="0">
+                        <input type="text" id="expenseRent" class="hidden-input" value="0">
+                    </div>
+                </div>
+
+                <!-- Initial Cost -->
+                <div class="control-group setup-group">
+                    <div class="card-light">
+                        <h3><i class="fa-solid fa-plane"></i> 초기 정착 비용 (KRW)</h3>
+                        <div class="input-row">
+                            <label>비자/행정 (원)</label>
+                            <input type="text" id="costVisa" placeholder="0" class="mini-input"
+                                onkeyup="formatNumberInput(this)">
+                        </div>
+                        <div class="input-row">
+                            <label>이사/가구 (원)</label>
+                            <input type="text" id="costMove" placeholder="0" class="mini-input"
+                                onkeyup="formatNumberInput(this)">
+                        </div>
+                        <div class="input-row">
+                            <label>보증금 (원)</label>
+                            <input type="text" id="costDeposit" placeholder="Auto" class="mini-input"
+                                onkeyup="formatNumberInput(this)">
+                        </div>
+                        <div class="setup-summary">
+                            <span>초기 비용 합계 <strong id="totalSetupCost">0</strong></span>
+                            <div class="progress-track">
+                                <div id="setupProgressBar" class="progress-fill"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Income -->
+                <div class="control-group income-group">
+                    <div class="card-light">
+                        <h3><i class="fa-solid fa-arrow-up-right-dots"></i> 수익 (Income)</h3>
+                        <div class="slider-item">
+                            <div class="slider-header">
+                                <label>투자 수익률(%)</label>
+                                <span id="valInterest" class="val-display-green">0%</span>
+                            </div>
+                            <input type="range" id="sliderInterest" min="0" max="10" step="0.1" value="0"
+                                class="slider-green">
+                        </div>
+                        <!-- Removed Fixed Income KRW -->
+                        <div class="input-row">
+                            <label>월급(MYR)</label>
+                            <input type="text" id="salaryMYR" placeholder="0" class="mini-input"
+                                onkeyup="formatNumberInput(this)">
+                        </div>
+                        <div class="income-summary">
+                            월 수익: <span id="totalIncomeDisplay">0</span> 원
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Expenses -->
+                <div class="control-group expense-group">
+                    <h3>1. 현재 한국에서의 월 지출 (KRW)</h3>
+                    <div class="slider-item">
+                        <div class="slider-header"><label>식비</label><span id="valFood" class="val-display">0</span>
+                        </div>
+                        <input type="range" id="sliderFood" min="0" max="3000000" step="10000" value="0">
+                    </div>
+                    <div class="slider-item">
+                        <div class="slider-header"><label>마켓</label><span id="valMarket" class="val-display">0</span>
+                        </div>
+                        <input type="range" id="sliderMarket" min="0" max="3000000" step="10000" value="0">
+                    </div>
+                    <div class="slider-item">
+                        <div class="slider-header"><label>교통</label><span id="valTransport" class="val-display">0</span>
+                        </div>
+                        <input type="range" id="sliderTransport" min="0" max="1000000" step="5000" value="0">
+                    </div>
+                    <div class="slider-item">
+                        <div class="slider-header"><label>관리비</label><span id="valUtility" class="val-display">0</span>
+                        </div>
+                        <input type="range" id="sliderUtility" min="0" max="1000000" step="5000" value="0">
+                    </div>
+                    <div class="slider-item">
+                        <div class="slider-header"><label>고정비</label><span id="valFixed" class="val-display">0</span>
+                        </div>
+                        <input type="range" id="sliderFixed" min="0" max="5000000" step="10000" value="0">
+                        <!-- Hidden inputs for script compatibility -->
+                        <input type="hidden" id="expenseFood" value="0"><input type="hidden" id="expenseMarket"
+                            value="0"><input type="hidden" id="expenseTransport" value="0"><input type="hidden"
+                            id="expenseUtility" value="0"><input type="hidden" id="expenseFixed" value="0">
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel-footer">
+                <button id="resetBtn" class="reset-btn">설정 초기화</button>
+            </div>
+        </aside>
+
+        <!-- RIGHT: Dashboard -->
+        <main class="dashboard-main">
+            <!-- Row 1 -->
+            <section class="top-row">
+                <div class="kpi-column">
+                    <div class="card kpi-card">
+                        <div>
+                            <div class="kpi-header"><span class="kpi-title">자산 생존 기간</span><i
+                                    class="fa-solid fa-stopwatch icon-fade"></i></div>
+                            <div class="kpi-value" id="runwayDisplay">0년 0개월</div>
+                            <div class="kpi-sub">현재 소비/수익 기준</div>
+                        </div>
+                        <div id="safetyBadge" class="badge badge-neutral">분석 중</div>
+                    </div>
+
+                    <div class="card kpi-card">
+                        <div>
+                            <div class="kpi-header"><span class="kpi-title">현지 예상 생활비</span><i
+                                    class="fa-solid fa-money-bill-wave icon-fade"></i></div>
+                            <div class="kpi-value"><span class="currency">MYR</span> <span id="totalCostMYR">0</span>
+                            </div>
+                            <div class="kpi-sub">약 <span id="totalCostKRW">0</span> 원</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card chart-card-main">
+                    <div class="chart-header">
+                        <h3><i class="fa-solid fa-chart-line"></i> 자산 시뮬레이션</h3>
+                    </div>
+                    <div class="chart-box-lg"><canvas id="assetChart"></canvas></div>
+                </div>
+            </section>
+
+            <!-- Row 2 -->
+            <section class="bottom-row">
+                <div class="card">
+                    <div class="analysis-header"><i class="fa-solid fa-scale-unbalanced"></i> Cash Flow (수익 vs 지출)</div>
+                    <div class="chart-box-sm"><canvas id="compareChart"></canvas></div>
+                    <div class="savings-alert" id="savingsAlert"><span id="savingsText">입력 대기</span></div>
+                </div>
+
+                <div class="card">
+                    <div class="analysis-header">
+                        <div style="flex:1">
+                            <i class="fa-solid fa-wallet"></i> 2. 말레이시아 현지 최적화 지출
+                            <div class="chart-guide-text">💡 현지 물가 지수와 최적화 비율이 적용된 수치입니다</div>
+                        </div>
+                    </div>
+                    <div class="breakdown-wrapper">
+                        <div class="gauge-area">
+                            <canvas id="gaugeChart"></canvas>
+                            <div class="gauge-label">
+                                <strong id="burnRateVal">0%</strong>
+                                <span>Burn Rate</span>
+                            </div>
+                        </div>
+                        <div class="list-wrapper">
+                            <ul class="detail-list-compact" id="breakdownList"></ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="analysis-header"><i class="fa-solid fa-lightbulb"></i> 금융 인사이트</div>
+                    <div id="insightBox" class="insight-box">
+                        <p class="placeholder-text">데이터를 입력해주세요.</p>
+                    </div>
+                    <div class="checklist">
+                        <h4>Checklist</h4>
+                        <ul>
+                            <li><input type="checkbox" id="ck1"><label for="ck1">해외 파생상품 신고</label></li>
+                            <li><input type="checkbox" id="ck2"><label for="ck2">실손보험 중지</label></li>
+                            <li><input type="checkbox" id="ck3"><label for="ck3">부동산 세금 확인</label></li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Row 3: Executive Report (V6.0) -->
+            <section id="reportSection" class="report-container">
+                <div class="report-header-row">
+                    <h2><i class="fa-solid fa-file-signature"></i> Global Migration Suitability Report</h2>
+                    <button class="btn-print" onclick="window.print()"><i class="fa-solid fa-print"></i> PDF 저장 /
+                        인쇄</button>
+                </div>
+
+                <!-- Simulation Controls (Stress Test) -->
+                <div class="stress-control-panel">
+                    <span class="stress-label">스트레스 테스트 (위기 시뮬레이션):</span>
+                    <button id="btnStressRate" class="btn-stress"><i class="fa-solid fa-money-bill-trend-up"></i> 환율
+                        +10% 급등</button>
+                    <button id="btnStressYield" class="btn-stress"><i class="fa-solid fa-arrow-trend-down"></i> 수익률 -2%
+                        하락</button>
+                    <button id="btnStressReset" class="btn-stress-reset"><i class="fa-solid fa-rotate-left"></i>
+                        리셋</button>
+                </div>
+
+                <div class="report-grid">
+                    <!-- Metric Cards -->
+                    <div class="report-card metric-box">
+                        <span class="metric-label">예상 자산 수명</span>
+                        <div class="metric-value main-metric" id="reportRunway">0년 0개월</div>
+                        <div class="metric-sub" id="reportRunwaySub">물가상승률 3% 반영</div>
+                    </div>
+                    <div class="report-card metric-box">
+                        <span class="metric-label">재무 건강 등급</span>
+                        <div class="metric-value" id="reportGrade">-</div>
+                        <div class="metric-sub" id="reportGradeSub">평가 중</div>
+                    </div>
+                    <div class="report-card metric-box">
+                        <span class="metric-label">최소 생존 수익 (Break-even)</span>
+                        <div class="metric-value" id="reportBreakeven">0 원</div>
+                        <div class="metric-sub">자산 유지를 위한 월 최소 수입</div>
+                    </div>
+                </div>
+
+                <!-- Strategic Analysis -->
+                <div class="report-card analysis-box">
+                    <h3><i class="fa-solid fa-user-doctor"></i> AI 자산 컨설턴트 총평</h3>
+                    <div id="expertComment" class="expert-text">
+                        데이터 분석 중...
+                    </div>
+
+                    <div class="action-plan-box">
+                        <h4><i class="fa-solid fa-clipboard-check"></i> Action Plan (목표 달성 솔루션)</h4>
+                        <ul id="actionPlanList">
+                            <li>분석 대기 중...</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- ASSET & TAX MODAL -->
+    <div id="assetModal" class="modal-overlay">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h2><i class="fa-solid fa-file-invoice-dollar"></i> 자산 현금화 및 세금 최적화 (Tax Optimizer)</h2>
+                <button id="btnCloseModal" class="close-btn"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+
+            <div class="modal-body">
+                <!-- TABS -->
+                <div class="tabs">
+                    <div class="tab active" data-tab="tab-realestate"><i class="fa-solid fa-building"></i> 부동산</div>
+                    <div class="tab" data-tab="tab-stock"><i class="fa-solid fa-chart-line"></i> 주식</div>
+                    <div class="tab" data-tab="tab-cash"><i class="fa-solid fa-money-bill"></i> 현금 등</div>
+                </div>
+
+                <!-- TAB CONTENT: Real Estate -->
+                <div id="tab-realestate" class="tab-content active">
+                    <div class="input-row-lg">
+                        <label>매도 예상 가액</label>
+                        <input type="text" id="propSell" placeholder="0" onkeyup="formatNumberInput(this)">
+                    </div>
+                    <div class="input-row-lg">
+                        <label>취득 가액 (매입가)</label>
+                        <input type="text" id="propBuy" placeholder="0" onkeyup="formatNumberInput(this)">
+                    </div>
+                    <div class="input-row-flex">
+                        <div>
+                            <label>보유 기간 (년)</label>
+                            <input type="number" id="propYears" value="2" min="1" style="width:80px">
+                        </div>
+                        <div class="checkbox-wrapper">
+                            <input type="checkbox" id="propOneHouse" checked>
+                            <label for="propOneHouse">1세대 1주택 (12억 공제)</label>
+                        </div>
+                    </div>
+                    <div class="tax-result-box">
+                        <span>예상 양도소득세</span>
+                        <strong id="estPropTax" class="text-danger">0 원</strong>
+                    </div>
+                </div>
+
+                <!-- TAB CONTENT: Stock -->
+                <div id="tab-stock" class="tab-content">
+                    <div class="input-row-lg">
+                        <label>총 매도 금액</label>
+                        <input type="text" id="stockSell" placeholder="0" onkeyup="formatNumberInput(this)">
+                    </div>
+                    <div class="input-row-lg">
+                        <label>총 매수 금액 (원금)</label>
+                        <input type="text" id="stockBuy" placeholder="0" onkeyup="formatNumberInput(this)">
+                    </div>
+                    <div class="input-row-flex">
+                        <div class="checkbox-wrapper">
+                            <input type="checkbox" id="stockOverseas">
+                            <label for="stockOverseas">해외 주식 (250만 공제)</label>
+                        </div>
+                    </div>
+                    <div class="tax-result-box">
+                        <span>예상 양도소득세 (22%)</span>
+                        <strong id="estStockTax" class="text-danger">0 원</strong>
+                    </div>
+                </div>
+
+                <!-- TAB CONTENT: Cash -->
+                <div id="tab-cash" class="tab-content">
+                    <div class="input-row-lg">
+                        <label>현금성 자산 합계</label>
+                        <input type="text" id="cashAmount" placeholder="0" onkeyup="formatNumberInput(this)">
+                    </div>
+                    <p class="micro-text">예금, 적금, 보험 해지 환급금 등 현금화 가능한 모든 자산</p>
+                </div>
+            </div>
+
+            <!-- FOOTER: Global Settings and Summary -->
+            <div class="modal-footer-custom">
+                <div class="fx-setting">
+                    <label>환전 우대 후 수수료율 (Spread)</label>
+                    <div class="range-wrap">
+                        <input type="range" id="fxSpread" min="0" max="2.0" step="0.1" value="1.0">
+                        <span id="fxSpreadVal">1.0%</span>
+                    </div>
+                </div>
+
+                <div class="final-summary">
+                    <div class="sum-row">
+                        <span>총 자산 (Gross)</span>
+                        <span id="modalGross">0</span>
+                    </div>
+                    <div class="sum-row text-danger">
+                        <span>세금 및 공과금 (Tax)</span>
+                        <span id="modalTax">- 0</span>
+                    </div>
+                    <div class="sum-row text-warning">
+                        <span>환전/송금 비용 (FX)</span>
+                        <span id="modalFX">- 0</span>
+                    </div>
+                    <div class="sum-row final">
+                        <span>이주 실행 자산 (Net)</span>
+                        <span id="modalNet">0</span>
+                    </div>
+                </div>
+
+                <button id="btnApplyAsset" class="btn-primary-full">자산 시뮬레이션 적용</button>
+            </div>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+
+</html>
