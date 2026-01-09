@@ -3,6 +3,7 @@ const EXCHANGE_API = 'https://open.er-api.com/v6/latest/KRW';
 let currentExchangeRate = 0; // 1 KRW = X MYR
 let assetsChart;
 let compareChart; // Added global variable for split view
+let cashflowChart;
 let gaugeChart;
 let calculatedNetAsset = 0; // Fixed: Global variable restored
 
@@ -544,7 +545,9 @@ function calculateAll() {
         document.getElementById('totalIncomeDisplay').textContent = Math.round(incomeSalaryKRW).toLocaleString(); // Basic Income
 
         // 7. Simulation Loop
-        const simMonths = 600; // 50 Years
+        // Extend horizon so users can see depletion timing beyond 50 years.
+        // We still keep an upper bound to avoid unbounded loops.
+        const simMonths = 12 * 50; // 50 Years
         const dataPoints = [];
         const labels = [];
 
@@ -563,6 +566,11 @@ function calculateAll() {
         const monthlyYield = appliedYield / 12;
 
         let depleteIndex = -1;
+
+        // First-year cashflow diagnostics (monthly net flow)
+        let firstYearSumNetFlow = 0;
+        let firstYearMinNetFlow = Infinity;
+        let firstYearCount = 0;
 
         for (let i = 0; i <= simMonths; i++) {
             // Add Data point (Yearly or every 6 months to reduce chart load?)
@@ -593,14 +601,26 @@ function calculateAll() {
             let currentMonthExpense = totalMonthlyExpense * Math.pow(1 + monthlyInflation, i);
 
             // Net Flow
-            simAsset = simAsset + netProfit + monthlyIncome - currentMonthExpense;
+            const monthNetFlow = netProfit + monthlyIncome - currentMonthExpense;
+            simAsset = simAsset + monthNetFlow;
+
+            if (i < 12) {
+                firstYearSumNetFlow += monthNetFlow;
+                firstYearMinNetFlow = Math.min(firstYearMinNetFlow, monthNetFlow);
+                firstYearCount += 1;
+            }
         }
 
+        const isNotDepletedWithinHorizon = (depleteIndex === -1);
+
         // Update Chart
-        updateChart(labels, dataPoints);
+        updateChart(labels, dataPoints, isNotDepletedWithinHorizon);
 
         // Update Comparison & Breakdown
         updateComparisonChart(housingType, localRentCost);
+
+        // True Cashflow (Income vs Expense)
+        updateCashflowChart(totalMonthlyExpense, incomeSalaryKRW, appliedYield, currentAsset);
 
         // Prepare Objects for Breakdown
         const krwExpenses = {
@@ -624,32 +644,43 @@ function calculateAll() {
         updateBreakdown(krwExpenses, localExpenses, currentExchangeRate);
 
         // Derived Metrics for Report
-        const isInfinite = (depleteIndex === -1 && simAsset >= currentAsset);
-        const finalMonths = (depleteIndex === -1) ? simMonths : depleteIndex;
+        const finalMonths = isNotDepletedWithinHorizon ? simMonths : depleteIndex;
         const interestRateVal = parseFloat(document.getElementById('sliderInterest').value);
 
         // V7.2 Fix: Update Main Dashboard Runway Display
         const rDisplay = document.getElementById('runwayDisplay');
         if (rDisplay) {
-            if (isInfinite) {
-                rDisplay.innerHTML = "무한 <span class='text-sm text-gray-500'>(자산 증가 중)</span>";
+            const rY = Math.floor(finalMonths / 12);
+            const rM = finalMonths % 12;
+            if (isNotDepletedWithinHorizon) {
+                rDisplay.innerHTML = `${rY}년+ <span class='text-sm text-gray-500'>(시뮬레이션 범위 내 미고갈)</span>`;
             } else {
-                const rY = Math.floor(finalMonths / 12);
-                const rM = finalMonths % 12;
                 rDisplay.innerHTML = `${rY}년 ${rM}개월 <span class='text-sm text-gray-500'>(현재 소비 기준)</span>`;
             }
         }
 
-        // Update Executive Report stats
-        updateReport(isInfinite, finalMonths, currentAsset, totalMonthlyExpense, incomeSalaryKRW, interestRateVal);
+        // First-year cashflow stats
+        const firstYearAvgNetFlow = firstYearCount > 0 ? (firstYearSumNetFlow / firstYearCount) : 0;
+        const firstYearWorstNetFlow = Number.isFinite(firstYearMinNetFlow) ? firstYearMinNetFlow : 0;
 
-        // V7.4 Feature: Update Visa Status
-        updateVisaStatus(window.simCommonNet); // Based on Liquid Assets (Cash+Stock) available for Deposit
-        // Actually, MM2H requires *Liquid Assets* proof.
-        // If 'Buy' mode, House equity doesn't count for Deposit usually (must be liquid).
-        // So window.simCommonNet (Cash+Stock) is the correct metric?
-        // Or window.simStockGross + window.simCashGross?
-        // Let's use `(window.simStockGross + window.simCashGross)` as "Liquid Assets Proof".
+        // Update Executive Report stats
+        updateReport(
+            isNotDepletedWithinHorizon,
+            finalMonths,
+            currentAsset,
+            totalMonthlyExpense,
+            incomeSalaryKRW,
+            appliedYield,
+            simGross,
+            simTax,
+            fxCost,
+            firstYearAvgNetFlow,
+            firstYearWorstNetFlow,
+            simMonths,
+            spread
+        );
+
+        // Visa Status (MM2H) - based on liquid assets proof (cash + stock)
         const liquidProof = (window.simStockGross || 0) + (window.simCashGross || 0);
         updateVisaStatus(liquidProof);
 
@@ -720,6 +751,76 @@ function updateComparisonChart(housingType, localRentCost) {
             alertBox.style.display = 'none';
         }
     }
+}
+
+function updateCashflowChart(totalMonthlyExpense, incomeSalaryKRW, appliedYield, investableAssets) {
+    const canvas = document.getElementById('cashflowChart');
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+
+    // Monthly net investment return (after 15.4% tax)
+    const monthlyYield = (appliedYield || 0) / 12;
+    const grossInvestmentReturn = (investableAssets || 0) * monthlyYield;
+    const netInvestmentReturn = grossInvestmentReturn * (1 - 0.154);
+
+    const totalIncome = (incomeSalaryKRW || 0) + netInvestmentReturn;
+    const totalExpense = totalMonthlyExpense || 0;
+
+    if (cashflowChart) cashflowChart.destroy();
+
+    cashflowChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: ['수익 (KRW)', '지출 (KRW)'],
+            datasets: [{
+                data: [Math.max(0, totalIncome), Math.max(0, totalExpense)],
+                backgroundColor: ['#10b981', '#ef4444'],
+                borderRadius: 4,
+                barThickness: 30
+            }]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: { x: { display: false }, y: { display: true } }
+        }
+    });
+}
+
+function updateVisaStatus(liquidProofKRW) {
+    const resultEl = document.getElementById('visaCheckResult');
+    const badgeEl = document.getElementById('visaBadge');
+    if (!resultEl || !badgeEl) return;
+
+    const rate = (typeof currentExchangeRate === 'number' && currentExchangeRate > 0)
+        ? currentExchangeRate
+        : (1 / 300);
+
+    const liquidKRW = Math.max(0, Number(liquidProofKRW) || 0);
+    const liquidMYR = liquidKRW * rate;
+    const myrRounded = Math.round(liquidMYR);
+
+    // Simplified heuristic thresholds (liquid assets proof basis)
+    const THRESH_OK_MYR = 1000000;
+    const THRESH_MAYBE_MYR = 500000;
+
+    let label = '부족';
+    let color = '#ef4444';
+
+    if (myrRounded >= THRESH_OK_MYR) {
+        label = '충족 가능';
+        color = '#10b981';
+    } else if (myrRounded >= THRESH_MAYBE_MYR) {
+        label = '검토 필요';
+        color = 'var(--primary)';
+    }
+
+    badgeEl.textContent = `${label} · MYR ${myrRounded.toLocaleString()}`;
+    badgeEl.style.color = color;
+    resultEl.title = `유동자산 증빙(현금+주식): 약 ${Math.round(liquidKRW).toLocaleString()} KRW`;
 }
 
 
@@ -794,17 +895,208 @@ function updateBreakdown(krw, local, rate) {
     document.getElementById('burnRateVal').textContent = (ratio * 100).toFixed(1) + '%';
 }
 
+function _simulateMetrics(startAsset, monthlyExpense, monthlyIncomeKRW, annualYield, horizonMonths) {
+    const monthlyInflation = INFLATION_RATE / 12;
+    const monthlyYield = Math.max(0, Number(annualYield) || 0) / 12;
+
+    let simAsset = Math.max(0, Number(startAsset) || 0);
+    let depleteIndex = -1;
+
+    let firstYearSumNetFlow = 0;
+    let firstYearMinNetFlow = Infinity;
+    let firstYearCount = 0;
+
+    for (let i = 0; i <= horizonMonths; i++) {
+        if (simAsset <= 0) {
+            simAsset = 0;
+            if (depleteIndex === -1 && i > 0) depleteIndex = i;
+        }
+
+        const profit = simAsset * monthlyYield;
+        const netProfit = profit * (1 - 0.154);
+        const currentMonthExpense = monthlyExpense * Math.pow(1 + monthlyInflation, i);
+
+        const monthNetFlow = netProfit + monthlyIncomeKRW - currentMonthExpense;
+        simAsset += monthNetFlow;
+
+        if (i < 12) {
+            firstYearSumNetFlow += monthNetFlow;
+            firstYearMinNetFlow = Math.min(firstYearMinNetFlow, monthNetFlow);
+            firstYearCount += 1;
+        }
+    }
+
+    const isNotDepletedWithinHorizon = (depleteIndex === -1);
+    const finalMonths = isNotDepletedWithinHorizon ? horizonMonths : depleteIndex;
+    const firstYearAvgNetFlow = firstYearCount > 0 ? (firstYearSumNetFlow / firstYearCount) : 0;
+    const firstYearWorstNetFlow = Number.isFinite(firstYearMinNetFlow) ? firstYearMinNetFlow : 0;
+
+    return { isNotDepletedWithinHorizon, finalMonths, firstYearAvgNetFlow, firstYearWorstNetFlow };
+}
+
+function _gradeKey(isNotDepletedWithinHorizon, totalMonths) {
+    const years = Math.floor(totalMonths / 12);
+    if (isNotDepletedWithinHorizon || years >= 30) return 'safe';
+    if (years >= 15) return 'caution';
+    return 'danger';
+}
+
+function _hashSeed() {
+    let h = 2166136261;
+    for (let i = 0; i < arguments.length; i++) {
+        const n = Number(arguments[i]) || 0;
+        const x = (Number.isFinite(n) ? Math.round(n) : 0) | 0;
+        h ^= x;
+        h = Math.imul(h, 16777619);
+    }
+    return h >>> 0;
+}
+
+function _mulberry32(seed) {
+    let a = seed >>> 0;
+    return function () {
+        a |= 0;
+        a = (a + 0x6D2B79F5) | 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+function _randn(rng) {
+    let u = 0;
+    let v = 0;
+    while (u === 0) u = rng();
+    while (v === 0) v = rng();
+    return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+}
+
+function _monteCarloSurvivalProbability(startAsset, monthlyExpense, monthlyIncomeKRW, annualYield, horizonMonths, opts) {
+    const options = opts || {};
+    const trials = Math.max(50, Math.min(1000, parseInt(options.trials || 300, 10) || 300));
+    const annualVol = Math.max(0, Number(options.annualVol) || 0.12);
+    const monthlyInflation = INFLATION_RATE / 12;
+    const meanMonthly = (Math.max(0, Number(annualYield) || 0)) / 12;
+    const sdMonthly = annualVol / Math.sqrt(12);
+
+    const seed = _hashSeed(startAsset, monthlyExpense, monthlyIncomeKRW, annualYield * 1e6, horizonMonths, annualVol * 1e6);
+    const rng = _mulberry32(seed);
+
+    let survive = 0;
+    for (let t = 0; t < trials; t++) {
+        let asset = Math.max(0, Number(startAsset) || 0);
+        for (let i = 0; i <= horizonMonths; i++) {
+            if (asset <= 0) {
+                asset = 0;
+                break;
+            }
+
+            const z = _randn(rng);
+            let monthlyReturn = meanMonthly + sdMonthly * z;
+            monthlyReturn = Math.max(-0.95, monthlyReturn);
+
+            const profit = asset * monthlyReturn;
+            const netProfit = profit > 0 ? profit * (1 - 0.154) : profit;
+            const currentMonthExpense = monthlyExpense * Math.pow(1 + monthlyInflation, i);
+
+            asset += (netProfit + monthlyIncomeKRW - currentMonthExpense);
+        }
+
+        if (asset > 0) survive += 1;
+    }
+
+    return survive / trials;
+}
+
+function _monteCarloRuinProbabilityWithinMonths(startAsset, monthlyExpense, monthlyIncomeKRW, annualYield, ruinWithinMonths, opts) {
+    const options = opts || {};
+    const trials = Math.max(50, Math.min(1000, parseInt(options.trials || 300, 10) || 300));
+    const annualVol = Math.max(0, Number(options.annualVol) || 0.12);
+    const horizon = Math.max(1, parseInt(ruinWithinMonths || 0, 10) || 120);
+
+    const monthlyInflation = INFLATION_RATE / 12;
+    const meanMonthly = (Math.max(0, Number(annualYield) || 0)) / 12;
+    const sdMonthly = annualVol / Math.sqrt(12);
+
+    const seed = _hashSeed(startAsset, monthlyExpense, monthlyIncomeKRW, annualYield * 1e6, horizon, annualVol * 1e6, 101);
+    const rng = _mulberry32(seed);
+
+    let ruined = 0;
+    for (let t = 0; t < trials; t++) {
+        let asset = Math.max(0, Number(startAsset) || 0);
+        let isRuined = false;
+
+        for (let i = 0; i <= horizon; i++) {
+            if (asset <= 0) {
+                isRuined = true;
+                break;
+            }
+
+            const z = _randn(rng);
+            let monthlyReturn = meanMonthly + sdMonthly * z;
+            monthlyReturn = Math.max(-0.95, monthlyReturn);
+
+            const profit = asset * monthlyReturn;
+            const netProfit = profit > 0 ? profit * (1 - 0.154) : profit;
+            const currentMonthExpense = monthlyExpense * Math.pow(1 + monthlyInflation, i);
+
+            asset += (netProfit + monthlyIncomeKRW - currentMonthExpense);
+        }
+
+        if (isRuined) ruined += 1;
+    }
+
+    return ruined / trials;
+}
+
 // V6.0 Report Logic
-function updateReport(isInfinite, totalMonths, netAssets, expense, income, interestRate) {
+function updateReport(isNotDepletedWithinHorizon, totalMonths, netAssets, expense, income, appliedYield, grossAssets, taxCost, fxCost, firstYearAvgNetFlow, firstYearWorstNetFlow, horizonMonths, fxSpreadPct) {
     const years = Math.floor(totalMonths / 12);
 
-    // 1. Metrics
-    document.getElementById('reportRunway').textContent = isInfinite ? "무한 (Infinite)" : `${years}년 ${totalMonths % 12}개월`;
+    // 1. Metric: Liquidation loss (tax + FX)
+    const lossEl = document.getElementById('reportLoss');
+    const lossSubEl = document.getElementById('reportLossSub');
+    if (lossEl) {
+        const tCost = Math.max(0, Number(taxCost) || 0);
+        const fCost = Math.max(0, Number(fxCost) || 0);
+        const loss = tCost + fCost;
+        lossEl.textContent = `약 ${Math.round(loss).toLocaleString()} 원`;
+
+        if (lossSubEl) {
+            const g = Math.max(0, Number(grossAssets) || 0);
+            const lossRate = g > 0 ? (loss / g) * 100 : 0;
+            const taxRate = g > 0 ? (tCost / g) * 100 : 0;
+            const fxRate = g > 0 ? (fCost / g) * 100 : 0;
+            lossSubEl.textContent = `헤어컷 ${lossRate.toFixed(1)}% (세금 ${taxRate.toFixed(1)}% + 환전 ${fxRate.toFixed(1)}%)`;
+        }
+    }
+
+    // 2. Metric: Monthly net cashflow (income - expense)
+    const cashflowEl = document.getElementById('reportCashflow');
+    const cashflowSubEl = document.getElementById('reportCashflowSub');
+    if (cashflowEl) {
+        const avg = Number(firstYearAvgNetFlow) || 0;
+        const worst = Number(firstYearWorstNetFlow) || 0;
+
+        const sign = avg >= 0 ? '+' : '-';
+        cashflowEl.textContent = `${sign} ${Math.round(Math.abs(avg)).toLocaleString()} 원/월`;
+
+        if (cashflowSubEl) {
+            const rate = (typeof currentExchangeRate === 'number' && currentExchangeRate > 0)
+                ? currentExchangeRate
+                : (1 / 300);
+
+            const avgMYR = avg * rate;
+            const worstMYR = worst * rate;
+
+            cashflowSubEl.textContent = `첫해(12개월) 평균 · 최악월 ${Math.round(worst).toLocaleString()}원 (MYR ${Math.round(worstMYR).toLocaleString()})`;
+        }
+    }
 
     const gradeEl = document.getElementById('reportGrade');
     const gradeSub = document.getElementById('reportGradeSub');
 
-    if (isInfinite || years >= 30) {
+    if (isNotDepletedWithinHorizon || years >= 30) {
         gradeEl.textContent = "안전 (Safe)";
         gradeEl.className = "metric-value grade-safe";
         gradeSub.textContent = "30년 이상 생존 가능";
@@ -818,20 +1110,34 @@ function updateReport(isInfinite, totalMonths, netAssets, expense, income, inter
         gradeSub.textContent = "15년 내 고갈 위험";
     }
 
-    // 2. Break-even Point logic
+    // Monte Carlo survival/ruin probability (deterministic seed; MVP-level assumption on volatility)
+    try {
+        const horizon = Math.max(12, parseInt(horizonMonths || 0, 10) || 12 * 50);
+        const p = _monteCarloSurvivalProbability(netAssets, expense, income, appliedYield, horizon, { trials: 300, annualVol: 0.12 });
+        const horizonY = Math.floor(horizon / 12);
+
+        const ruinMonths = Math.min(120, horizon);
+        const ruinY = Math.floor(ruinMonths / 12);
+        const pr = _monteCarloRuinProbabilityWithinMonths(netAssets, expense, income, appliedYield, ruinMonths, { trials: 300, annualVol: 0.12 });
+
+        if (gradeSub) gradeSub.textContent = `${gradeSub.textContent} · ${horizonY}년 생존확률 ${Math.round(p * 100)}% · ${ruinY}년 내 파산확률 ${Math.round(pr * 100)}% (MC 300회)`;
+    } catch (e) {
+        // no-op
+    }
+
+    // 3. Break-even Point logic (used in narrative/action plan)
+    const interestRate = parseFloat(document.getElementById('sliderInterest').value) || 0;
     const realYield = Math.max(0, interestRate - 3.0);
     const passiveIncome = (netAssets * (realYield / 100)) / 12;
     let requiredIncome = expense - passiveIncome;
     if (requiredIncome < 0) requiredIncome = 0;
 
-    document.getElementById('reportBreakeven').textContent = `약 ${Math.round(requiredIncome).toLocaleString()} 원`;
-
     // 3. Expert Text
     const expertEl = document.getElementById('expertComment');
     let expertText = "";
 
-    if (isInfinite) {
-        expertText = `현재 귀하의 자산 구조는 <strong>완벽한 경제적 자유</strong> 상태입니다.\n물가 상승(3%)을 고려하더라도 자산 소득이 지출을 능가합니다.\n은퇴 후 여유로운 삶을 즐기거나, 현지 기부 및 재투자를 고려해보세요.`;
+    if (isNotDepletedWithinHorizon) {
+        expertText = `현재 설정 기준으로는 <strong>장기적으로 고갈되지 않는</strong> 구조입니다.\n물가 상승(3%)을 고려하더라도 자산 소득이 지출을 상회합니다.\n은퇴 후 여유로운 삶을 즐기거나, 현지 재투자/현금흐름 다변화를 고려해보세요.`;
     } else if (years >= 15) {
         expertText = `현재 자산 구조는 <strong>비교적 안정적</strong>이나, 인플레이션 영향으로 ${years}년 뒤 자산 감소가 가속화될 수 있습니다.\n초기 10년은 여유가 있지만, 60대 이후 의료비 등 변수에 대비하여 <strong>월 수익 ${Math.round(requiredIncome * 0.3 / 10000)}만원</strong> 정도의 소일거리를 만드는 것을 추천합니다.`;
     } else {
@@ -847,7 +1153,7 @@ function updateReport(isInfinite, totalMonths, netAssets, expense, income, inter
     const planList = document.getElementById('actionPlanList');
     planList.innerHTML = '';
 
-    if (!isInfinite && years < 30) {
+    if (!isNotDepletedWithinHorizon && years < 30) {
         const save10 = expense * 0.1;
         const earn20 = expense * 0.2;
 
@@ -857,6 +1163,80 @@ function updateReport(isInfinite, totalMonths, netAssets, expense, income, inter
     } else {
         planList.innerHTML += `<li>현재 상태를 유지하며 <strong>건강 관리</strong>와 <strong>여가 생활</strong>에 집중하세요.</li>`;
         planList.innerHTML += `<li>상속세 및 증여 계획을 미리 수립하는 것이 좋습니다.</li>`;
+    }
+
+    // 5. Sensitivity (Top3) — append to Action Plan
+    try {
+        const horizon = Math.max(12, parseInt(horizonMonths || 0, 10) || 12 * 50);
+        const baseFinalMonths = Math.max(0, parseInt(totalMonths || 0, 10) || 0);
+        const baseGrade = _gradeKey(isNotDepletedWithinHorizon, baseFinalMonths);
+        const baseWorst = Number(firstYearWorstNetFlow) || 0;
+
+        const baseStartAsset = Math.max(0, Number(netAssets) || 0);
+        const baseExpense = Math.max(0, Number(expense) || 0);
+        const baseIncome = Number(income) || 0;
+        const baseYield = Math.max(0, Number(appliedYield) || 0);
+
+        const scenarios = [
+            {
+                name: '수익률 -1%p',
+                startAsset: baseStartAsset,
+                expense: baseExpense,
+                income: baseIncome,
+                yield: Math.max(0, baseYield - 0.01)
+            },
+            {
+                name: '지출 +10%',
+                startAsset: baseStartAsset,
+                expense: baseExpense * 1.10,
+                income: baseIncome,
+                yield: baseYield
+            },
+            {
+                name: '환전스프레드 +0.5%p',
+                startAsset: Math.max(0, baseStartAsset - (Math.max(0, Number(grossAssets) || 0) - Math.max(0, Number(taxCost) || 0)) * 0.005),
+                expense: baseExpense,
+                income: baseIncome,
+                yield: baseYield
+            }
+        ];
+
+        const results = scenarios.map(s => {
+            const r = _simulateMetrics(s.startAsset, s.expense, s.income, s.yield, horizon);
+            const grade = _gradeKey(r.isNotDepletedWithinHorizon, r.finalMonths);
+            return {
+                name: s.name,
+                isNotDepletedWithinHorizon: r.isNotDepletedWithinHorizon,
+                finalMonths: r.finalMonths,
+                grade,
+                worst: r.firstYearWorstNetFlow,
+                deltaMonths: r.finalMonths - baseFinalMonths,
+                deltaWorst: (r.firstYearWorstNetFlow || 0) - baseWorst
+            };
+        });
+
+        results.sort((a, b) => (a.deltaMonths - b.deltaMonths) || (a.deltaWorst - b.deltaWorst));
+
+        const gradeLabel = (k) => (k === 'safe' ? '안전' : (k === 'caution' ? '주의' : '위험'));
+        const fmtRunway = (isNot, m) => {
+            if (isNot) return `${Math.floor(horizon / 12)}년+`;
+            const y = Math.floor(m / 12);
+            const mm = Math.max(0, m % 12);
+            return `${y}년 ${mm}개월`;
+        };
+        const fmtSignedKRW = (v) => `${v >= 0 ? '+' : '-'}${Math.round(Math.abs(v)).toLocaleString()}원`;
+        const fmtDeltaKRW = (v) => `${v >= 0 ? '+' : '-'}${Math.round(Math.abs(v)).toLocaleString()}원`;
+        const fmtSignedPct = (v) => `${v >= 0 ? '+' : '-'}${Math.abs(v).toFixed(1)}%`;
+
+        const baseRunway = fmtRunway(isNotDepletedWithinHorizon, baseFinalMonths);
+        const baseWorstFmt = fmtSignedKRW(baseWorst);
+
+        const top = results[0];
+        const topPct = baseExpense > 0 ? (top.deltaWorst / baseExpense) * 100 : null;
+        const topPctText = (topPct === null) ? '' : ` (월지출 대비 ${fmtSignedPct(topPct)})`;
+        planList.innerHTML += `<li><strong>민감도(요약)</strong>: <span class='text-gray-500'>(가정이 바뀔 때 결과가 얼마나 흔들리는지)</span> 등급/수명(${baseRunway})은 유지되지만, <strong>최악월 여유(현금흐름 버퍼)</strong>는 <strong>${top.name}</strong>에서 ${fmtDeltaKRW(top.deltaWorst)}${topPctText} 변화로 가장 민감합니다.</li>`;
+    } catch (e) {
+        // no-op
     }
 }
 
@@ -1006,33 +1386,3 @@ function setSlider(name, val) {
     }
 }
 
-function updateVisaStatus(liquidAssets) {
-    const badge = document.getElementById('visaBadge');
-    if (!badge) return;
-
-    // MM2H 2025 Criteria (Approximate KRW)
-    // Platinum: Deposit $1M (~14.5 Billion KRW)
-    // Gold: Deposit $500k (~7.3 Billion KRW)
-    // Silver: Deposit $150k (~2.2 Billion KRW)
-
-    let tier = "자격 미달 (Fail)";
-    let color = "#ef4444"; // Red
-    let icon = "fa-circle-xmark";
-
-    if (liquidAssets >= 1450000000) {
-        tier = "플래티넘 (Platinum)"; // Fixed Deposit $1M
-        color = "#6366f1"; // Indigo
-        icon = "fa-crown";
-    } else if (liquidAssets >= 730000000) {
-        tier = "골드 (Gold)"; // Fixed Deposit $500k
-        color = "#f59e0b"; // Amber
-        icon = "fa-medal";
-    } else if (liquidAssets >= 220000000) {
-        tier = "실버 (Silver)"; // Fixed Deposit $150k
-        color = "#64748b"; // Scalable Silver
-        icon = "fa-shield-halved";
-    }
-
-    badge.innerHTML = `<i class="fa-solid ${icon}"></i> ${tier}`;
-    badge.style.color = color;
-}

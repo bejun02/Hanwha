@@ -546,6 +546,12 @@ input.slider-green {
     margin-bottom: 1rem;
 }
 
+.dual-chart-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1rem;
+}
+
 .breakdown-wrapper {
     display: flex;
     flex-direction: column;

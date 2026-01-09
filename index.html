@@ -217,9 +217,16 @@
             <!-- Row 2 -->
             <section class="bottom-row">
                 <div class="card">
-                    <div class="analysis-header"><i class="fa-solid fa-scale-unbalanced"></i> Cash Flow (수익 vs 지출)</div>
-                    <div class="chart-box-sm"><canvas id="compareChart"></canvas></div>
-                    <div class="savings-alert" id="savingsAlert"><span id="savingsText">입력 대기</span></div>
+                    <div class="analysis-header"><i class="fa-solid fa-scale-unbalanced"></i> 지출 비교 &amp; 수익 vs 지출</div>
+                    <div class="dual-chart-grid">
+                        <div>
+                            <div class="chart-box-sm"><canvas id="compareChart"></canvas></div>
+                            <div class="savings-alert" id="savingsAlert"><span id="savingsText">입력 대기</span></div>
+                        </div>
+                        <div>
+                            <div class="chart-box-sm"><canvas id="cashflowChart"></canvas></div>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="card">
@@ -283,9 +290,9 @@
                 <div class="report-grid">
                     <!-- Metric Cards -->
                     <div class="report-card metric-box">
-                        <span class="metric-label">예상 자산 수명</span>
-                        <div class="metric-value main-metric" id="reportRunway">0년 0개월</div>
-                        <div class="metric-sub" id="reportRunwaySub">물가상승률 3% 반영</div>
+                        <span class="metric-label">현금화 손실 (세금+환전)</span>
+                        <div class="metric-value main-metric" id="reportLoss">0 원</div>
+                        <div class="metric-sub" id="reportLossSub">총자산 대비 0%</div>
                     </div>
                     <div class="report-card metric-box">
                         <span class="metric-label">재무 건강 등급</span>
@@ -293,9 +300,9 @@
                         <div class="metric-sub" id="reportGradeSub">평가 중</div>
                     </div>
                     <div class="report-card metric-box">
-                        <span class="metric-label">최소 생존 수익 (Break-even)</span>
-                        <div class="metric-value" id="reportBreakeven">0 원</div>
-                        <div class="metric-sub">자산 유지를 위한 월 최소 수입</div>
+                        <span class="metric-label">월 순현금흐름 (수익−지출)</span>
+                        <div class="metric-value" id="reportCashflow">0 원/월</div>
+                        <div class="metric-sub" id="reportCashflowSub">급여+세후 투자수익 − 월지출</div>
                     </div>
                 </div>
 
